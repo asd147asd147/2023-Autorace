@@ -1,0 +1,109 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+################################################################################
+# Copyright 2018 ROBOTIS CO., LTD.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+################################################################################
+
+# Authors: Leon Jung, [AuTURBO] Ki Hoon Kim (https://github.com/auturbo), Gilbert
+
+import rospy
+import numpy as np
+import cv2
+import itertools
+from sensor_msgs.msg import Image, CompressedImage
+from dynamic_reconfigure.server import Server
+from std_msgs.msg import UInt8, Bool
+from cv_bridge import CvBridge
+from ecp_preproc.cfg import LevelCrossParamsConfig
+
+class DetectLevelCross():
+    def __init__(self):        
+        self.cvBridge = CvBridge()
+
+        self.lower_red = np.array([0,131,68], np.uint8)
+        self.upper_red = np.array([188,255, 255], np.uint8)
+        self.kernel = np.ones((11, 11), np.uint8)  # 컨투어 이용할 번수
+
+        self.cv_image = None
+        self.checkLevelCross = 0 #0: None. 1: Checking Level-Cross
+        self.sub_image = rospy.Subscriber('/camera/sign_cam/sign_image_raw/compressed', CompressedImage, self.cbImage, queue_size = 1, buff_size = 2**24)
+        self.sub_check_level_cross = rospy.Subscriber('/check/levelcross', UInt8, self.cbCheckLevelCross, queue_size=1)
+
+        self.pub_detect_level_cross = rospy.Publisher('/detect/levelcross/compressed', CompressedImage, queue_size=1)
+        self.pub_detect_level_cross_bar = rospy.Publisher('/detect/levelcrossbar', Bool, queue_size=1)
+
+        self.is_debug_mode = rospy.get_param("~is_debug_mode", False)
+        self.prev_crossbar_detect = False
+        if self.is_debug_mode == True:
+            srv_image_crossbar = Server(LevelCrossParamsConfig, self.cbGetLevelCrossParams)
+
+    def cbCheckLevelCross(self, msg):
+        self.checkLevelCross = msg.data
+        
+    def cbGetLevelCrossParams(self, config, level):
+        self.lower_red = np.array([config['hue_red_l'], config['saturation_red_l'], config['lightness_red_l']], np.uint8)
+        self.upper_red = np.array([config['hue_red_h'], config['saturation_red_h'], config['lightness_red_h']], np.uint8)
+        return config
+
+    def cbImage(self, image_msg):
+        if self.checkLevelCross == 1:
+            
+            np_arr = np.frombuffer(image_msg.data, np.uint8)
+            cv_image = cv2.rotate(cv2.imdecode(np_arr, cv2.IMREAD_COLOR), cv2.ROTATE_180)
+            crossbar_detect = False
+
+            img_ori = cv_image.copy()
+
+            img_height, img_width = img_ori.shape[:2]
+            img_roi = img_ori[:, int(img_width/6):int(img_width*5/6)].copy()
+            img_hsv = cv2.cvtColor(img_roi, cv2.COLOR_BGR2HSV)
+
+            # Hsv fillter - Red color
+            img_mask_r = cv2.inRange(img_hsv, self.lower_red, self.upper_red)
+            img_mask_r = cv2.morphologyEx(img_mask_r, cv2.MORPH_OPEN, self.kernel)
+            img_red = cv2.bitwise_and(img_roi, img_roi, mask=img_mask_r)
+
+            # self.pub_detect_level_cross.publish(self.cvBridge.cv2_to_compressed_imgmsg(img_red, "jpg"))
+
+            list_contour, _ = cv2.findContours(img_mask_r, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+            for contour in list_contour:
+                cv2.drawContours(img_red, [contour], 0, (255, 0, 0), 2)
+                x, y, w, h = cv2.boundingRect(contour)
+                cv2.putText(img_red, 'w: {}, h: {}, aspect_ratio: {:.2f}'.format(w, h, (float(w) / h)), (x+2, y+h+5), cv2.FONT_HERSHEY_SIMPLEX, 0.1, (0, 255, 255), 1)
+
+                if (30 < w < 100) and (30 < h < 100) and (0.5 < (float(w) / h) < 1.5):
+                    cv2.drawContours(img_red, [contour], 0, (0, 255, 0), 2)
+                    crossbar_detect = True
+
+            self.pub_detect_level_cross.publish(self.cvBridge.cv2_to_compressed_imgmsg(img_red, "jpg"))
+
+            if self.prev_crossbar_detect == True and crossbar_detect == False:
+                self.prev_crossbar_detect = False
+                self.checkLevelCross = False
+            msg_crossbar_detect = Bool()
+            msg_crossbar_detect.data = crossbar_detect
+            self.pub_detect_level_cross_bar.publish(msg_crossbar_detect)
+            
+
+
+    def main(self):
+        rospy.spin()
+
+if __name__ == '__main__':
+    rospy.init_node('levelcross_detection')
+    node = DetectLevelCross()
+    node.main()

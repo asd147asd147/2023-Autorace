@@ -1,0 +1,31 @@
+<launch>
+  <!-- Arguments -->
+  
+  <arg name="gazebo" default="off" doc="gazebo type [on, off]"/>
+
+  <arg name="open_rviz" default="false"/>
+  
+  <!-- TurtleBot3 -->
+  <include file="$(find ecp_bringup)/launch/ecp_remote.launch">
+  </include>
+
+  <!-- SLAM: Gmapping, Cartographer, Hector, Karto, Frontier_exploration, RTAB-Map -->
+  <group if="$(eval gazebo == 'off')"> 
+    <include file="$(find ecp_slam)/launch/ecp_cartographer.launch">
+      <arg name="configuration_basename" value="ecp_lds_2d.lua"/>
+    </include>
+  </group>
+
+  <group if="$(eval gazebo == 'on')"> 
+    <include file="$(find ecp_slam)/launch/ecp_cartographer.launch">
+      <arg name="configuration_basename" value="ecp_lds_2d_gazebo.lua"/>
+    </include>
+  </group>
+
+  <include file="$(find ecp_slam)/launch/ecp_test_goal.launch"/>
+  <!-- rviz -->
+  <!-- <group if="$(arg open_rviz)"> 
+    <node pkg="rviz" type="rviz" name="rviz" required="true"
+          args="-d $(find ecp_slam)/rviz/ecp_cartographer.rviz"/>
+  </group> -->
+</launch>

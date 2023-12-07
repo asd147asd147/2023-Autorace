@@ -1,0 +1,91 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+################################################################################
+# Copyright 2018 ROBOTIS CO., LTD.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+################################################################################
+
+# Authors: Leon Jung, [AuTURBO] Ki Hoon Kim (https://github.com/auturbo), Gilbert
+
+import rospy
+import numpy as np
+import cv2
+from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal, MoveBaseActionGoal
+from std_msgs.msg import UInt8
+import time
+
+class GoalSLAM():
+    def __init__(self):
+
+        self.pub_goal = rospy.Publisher('/move_base/goal/', MoveBaseActionGoal, queue_size=1)
+
+        self.sub_check_tunnel = rospy.Subscriber('/check/tunnel', UInt8, self.cbCheckTunnel, queue_size=1)
+        self.trigger = False
+        # time.sleep(1)
+
+    def cbCheckTunnel(self, msg):
+        if self.trigger == False:
+            self.trigger = True
+            self.prev_time = time.time()
+            self.move_to_first()
+            while time.time() - self.prev_time < 10:
+                pass
+            self.move_to_second()
+
+    def move_to_first(self):
+        goal = MoveBaseActionGoal()
+        goal.header.stamp = rospy.Time.now()
+        goal.header.frame_id = ""
+
+        goal.goal.target_pose.header.frame_id = "map"
+        goal.goal.target_pose.header.stamp = rospy.Time.now()
+
+        goal.goal.target_pose.pose.orientation.x = 0
+        goal.goal.target_pose.pose.orientation.y = 0
+        goal.goal.target_pose.pose.orientation.z = 0
+        goal.goal.target_pose.pose.orientation.w = -1
+
+        goal.goal.target_pose.pose.position.x = -0.6
+        goal.goal.target_pose.pose.position.y = 0
+        goal.goal.target_pose.pose.position.z = 0
+
+        self.pub_goal.publish(goal)
+
+    def move_to_second(self):
+        goal = MoveBaseActionGoal()
+        goal.header.stamp = rospy.Time.now()
+        goal.header.frame_id = ""
+
+        goal.goal.target_pose.header.frame_id = "map"
+        goal.goal.target_pose.header.stamp = rospy.Time.now()
+
+        goal.goal.target_pose.pose.orientation.x = 0
+        goal.goal.target_pose.pose.orientation.y = 0
+        goal.goal.target_pose.pose.orientation.z = 0
+        goal.goal.target_pose.pose.orientation.w = 1
+
+        goal.goal.target_pose.pose.position.x = 0.15
+        goal.goal.target_pose.pose.position.y = 0
+        goal.goal.target_pose.pose.position.z = 0
+
+        self.pub_goal.publish(goal)
+
+    def main(self):
+        rospy.spin()
+
+if __name__ == '__main__':
+    rospy.init_node('ecp_test_goal')
+    node = GoalSLAM()
+    node.main()

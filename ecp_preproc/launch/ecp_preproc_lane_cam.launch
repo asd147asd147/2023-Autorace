@@ -1,0 +1,27 @@
+<launch>
+  <arg name="mode" default="action" doc="mode type [debug, action]"/>
+  <arg name="gazebo" default="off" doc="gazebo type [on, off]"/>
+
+    <!-- image ground projection -->
+    <node pkg="ecp_preproc" type="lane_projection" name="lane_projection" output="screen">
+      <rosparam command="load" file="$(find ecp_preproc)/calibration/lane_camera/projection.yaml" />
+      <param if="$(eval mode == 'debug')" name="/is_lane_camera_calibration_mode" value="True"/>
+      <param if="$(eval mode == 'action')" name="/is_lane_camera_calibration_mode" value="False"/>    
+
+      <remap if="$(eval gazebo == 'on')" from="/camera/image_input" to="/usb_cam/image_raw/compressed" />
+      <remap if="$(eval gazebo == 'off')" from="/camera/image_input" to="/camera/lane_cam/lane_image_raw/compressed" />
+      
+      <remap from="/camera/image_output" to="/lane_projected/compressed" />
+      <remap from="/camera/image_calib" to="/calib/lane_image_raw/compressed" />
+    </node>
+
+
+    <!-- lane detection -->
+    <node pkg="ecp_preproc" type="lane_detection" name="lane_detection" output="screen">
+      <rosparam command="load" file="$(find ecp_preproc)/calibration/lane_camera/detection.yaml" />
+      <param if="$(eval mode == 'debug')" name="/is_detection_calibration_mode" value="True"/>
+      <param if="$(eval mode == 'action')" name="/is_detection_calibration_mode" value="False"/>    
+ 
+      <remap from="/detect/image_input/compressed" to="/lane_projected/compressed" />
+    </node>
+</launch>

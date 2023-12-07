@@ -1,0 +1,10 @@
+---
+detect:
+  levelcross:
+    red:
+      hue_l: 0
+      hue_h: 111
+      saturation_l: 0
+      saturation_h: 38
+      lightness_l: 126
+      lightness_h: 255

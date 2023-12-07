@@ -1,0 +1,3 @@
+<launch>
+    <node pkg="ecp_slam" type="ecp_test_goal" name="ecp_test_goal" output="screen"/>
+</launch>

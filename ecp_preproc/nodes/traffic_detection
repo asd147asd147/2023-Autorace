@@ -1,0 +1,254 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+################################################################################
+# Copyright 2018 ROBOTIS CO., LTD.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+################################################################################
+
+# Authors: Leon Jung, [AuTURBO] Ki Hoon Kim (https://github.com/auturbo), Gilbert
+
+import rospy
+import math
+import numpy as np
+import cv2
+import itertools
+from sensor_msgs.msg import Image, CompressedImage
+from dynamic_reconfigure.server import Server
+from std_msgs.msg import UInt8, Bool
+from cv_bridge import CvBridge
+
+class DetectTraffic():
+    def __init__(self):        
+        self.cvBridge = CvBridge()
+
+        self.lower_red = np.array([0,131,68], np.uint8)
+        self.upper_red = np.array([188,255, 255], np.uint8)
+
+        self.lower_yellow = np.array([30,10,80],np.uint8)
+        self.upper_yellow = np.array([50,10,80],np.uint8)
+
+        self.lower_green = np.array([82,120,50], np.uint8)
+        self.upper_green = np.array([95,255,255], np.uint8)
+
+        self._kernel3 = np.ones((3, 3), np.uint8)  # 컨투어 이용할 번수
+
+        self.list_red = []
+        self.list_yellow = []
+        self.list_green = []
+
+        self.list_light = []
+
+        self.cv_image = None
+        self.checkTraffic = 0 #0: None. 1: Checking Traffic
+        self.sub_image = rospy.Subscriber('/camera/sign_cam/sign_image_raw/compressed', CompressedImage, self.cbImage, queue_size = 1, buff_size = 2**24)
+        self.sub_check_traffic = rospy.Subscriber('/check/traffic', UInt8, self.cbGetCheckTraffic, queue_size=1)
+
+        self.pub_detect_traffic = rospy.Publisher('/detect/traffic/compressed', CompressedImage, queue_size=1)
+        self.pub_detect_traffic_signal = rospy.Publisher('/detect/traffic_signal', UInt8, queue_size=1)
+
+        self.is_debug_mode = rospy.get_param("~is_debug_mode", False)
+
+    def cbGetCheckTraffic(self, msg):
+        self.checkTraffic = msg.data
+
+    def cbGetLevelCrossParams(self, config, level):
+        self.lower_red = np.array([config['hue_red_l'], config['saturation_red_l'], config['lightness_red_l']], np.uint8)
+        self.upper_red = np.array([config['hue_red_h'], config['saturation_red_h'], config['lightness_red_h']], np.uint8)
+
+        self.lower_yellow = np.array([config['hue_yellow_l'], config['saturation_yellow_l'], config['lightness_yellow_l']], np.uint8)
+        self.upper_yellow = np.array([config['hue_yellow_h'], config['saturation_yellow_h'], config['lightness_yellow_h']], np.uint8)
+
+        self.lower_green = np.array([config['hue_green_l'], config['saturation_green_l'], config['lightness_green_l']], np.uint8)
+        self.upper_green = np.array([config['hue_green_h'], config['saturation_green_h'], config['lightness_green_h']], np.uint8)
+
+        return config
+
+    def fn_mask_hsv(self, img_roi, lower_hsv, upper_hsv):
+        img_hsv = cv2.cvtColor(img_roi, cv2.COLOR_BGR2HSV)
+        img_mask = cv2.inRange(img_hsv, lower_hsv, upper_hsv)
+        return img_mask
+
+    def cbImage(self, image_msg):
+        np_arr = np.frombuffer(image_msg.data, np.uint8)
+        cv_image = cv2.rotate(cv2.imdecode(np_arr, cv2.IMREAD_COLOR), cv2.ROTATE_180)
+        img_ori = cv_image.copy()
+        val_height , val_width = img_ori.shape[0],img_ori.shape[1]  # shape is 180 x 320
+        img_roi = img_ori[val_height*2/9:val_height*3/4, val_width*3/4:val_width*7/8].copy()  # 관심영역 설정 80 x 80
+        green_sign_detect = self.fn_traffic_count_fixed_light(img_roi)
+        if self.checkTraffic == 1:
+            msg_green_sign_detect = UInt8()
+            msg_green_sign_detect.data = green_sign_detect
+            self.pub_detect_traffic_signal.publish(msg_green_sign_detect)
+        
+
+
+    def _fn_cal_distance(self, pts1, pts2):
+        return math.sqrt((pts2[0]-pts1[0])**2+(pts2[1]-pts1[1])**2)
+    
+    def fn_traffic_count_fixed_light(self, img_roi):
+        red_light_count = 0
+        yellow_light_count = 0
+        green_light_count = 0
+
+        img_gray = cv2.cvtColor(img_roi, cv2.COLOR_BGR2GRAY)
+        _, img_light = cv2.threshold(img_gray, 200, 255, cv2.THRESH_BINARY)
+        self.list_light, img_debug = self._fn_tracking_traffic(img_roi, img_light, self.list_light, 5, 5)
+
+        red_cx_min = 10
+        red_cx_max = 35
+        red_cy_min = 7
+        red_cy_max = 27
+        cv2.rectangle(img_debug, (red_cx_min, red_cy_min), (red_cx_max, red_cy_max), (127, 127, 255), 1)
+
+        yellow_cx_min = 10
+        yellow_cx_max = 35
+        yellow_cy_min = 27
+        yellow_cy_max = 47
+        cv2.rectangle(img_debug, (yellow_cx_min, yellow_cy_min), (yellow_cx_max, yellow_cy_max), (127, 255, 255), 1)
+
+        green_cx_min = 10
+        green_cx_max = 35
+        green_cy_min = 47
+        green_cy_max = 67
+        cv2.rectangle(img_debug, (green_cx_min, green_cy_min), (green_cx_max, green_cy_max), (127, 255, 127), 1)
+
+        for count, miss, cx, cy, area, x0, y0, w, h in self.list_light:
+            cv2.rectangle(img_debug, (x0, y0), (x0 + w, y0 + h), (0, 0, 127), 1)
+            cv2.putText(img_debug, str(count), (x0, y0+9), cv2.FONT_HERSHEY_SCRIPT_SIMPLEX, 0.4, (255, 0, 0))
+
+            if (red_cx_min < cx < red_cx_max) and (red_cy_min < cy < red_cy_max):
+                cv2.rectangle(img_debug, (x0, y0), (x0 + w, y0 + h), (0, 0, 255), 1)
+                if count > red_light_count:
+                    red_light_count = count
+
+            if (yellow_cx_min < cx < yellow_cx_max) and (yellow_cy_min < cy < yellow_cy_max):
+                cv2.rectangle(img_debug, (x0, y0), (x0 + w, y0 + h), (0, 255, 255), 1)
+                if count > yellow_light_count:
+                    yellow_light_count = count
+
+            if (green_cx_min < cx < green_cx_max) and (green_cy_min < cy < green_cy_max):
+                cv2.rectangle(img_debug, (x0, y0), (x0 + w, y0 + h), (0, 255, 0), 1)
+                if count > green_light_count:
+                    green_light_count = count
+        self.pub_detect_traffic.publish(self.cvBridge.cv2_to_compressed_imgmsg(img_debug, "jpg"))
+        if green_light_count > 3:
+            return True
+        return False
+
+
+    def _fn_tracking_find_contour(self, img_mask, min_dis_limit):
+        length_min, length_max = 5, 20
+        aspect_ratio_limit = 1.5
+        area_lower_limit = 0.1
+
+        list_contour, _ = cv2.findContours(img_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+        list_all_obj = []
+
+        for contour in list_contour:
+            x0, y0, w, h = cv2.boundingRect(contour)
+
+            if (length_min < w < length_max) and (length_min < h < length_max) and (1/aspect_ratio_limit < (float(w) / h) < aspect_ratio_limit):
+                moment = cv2.moments(contour)
+                area = moment['m00']
+                area_rectacgle = w * h
+                area_ratio = float(area) / area_rectacgle
+                if area_ratio > area_lower_limit:
+                    cx = int(moment['m10'] / moment['m00'])
+                    cy = int(moment['m01'] / moment['m00'])
+                    list_all_obj.append([cx, cy, area, x0, y0, w, h])
+
+        return list_all_obj
+
+    def _fn_tracking_traffic(self, img_roi, img_mask, traffic_obj, min_dis_limit = 15, miss_limit = 5):
+
+        img_morphology = cv2.morphologyEx(img_mask, cv2.MORPH_OPEN, self._kernel3, iterations=1)
+        img_roi = cv2.bitwise_and(img_roi, img_roi, mask=img_morphology)
+        img_debug = img_roi
+
+        list_all_obj = self._fn_tracking_find_contour(img_mask, min_dis_limit)
+        #list_all_obj = self._fn_tracking_find_hough(img_mask, min_dis_limit)
+
+        if list_all_obj is not None:
+            flag_continue_obj = [False] * len(traffic_obj)
+            flag_continue_obj_new = [False] * len(list_all_obj)
+
+            arr_dis = [[10000 for _ in range(len(traffic_obj))] for _ in range(len(list_all_obj))]
+            list_min_dis = [10000 for _ in range(len(list_all_obj))]
+
+            for ii_new in range(len(list_all_obj)):
+                cx_new, cy_new, area_new, x0_new, y0_new, w_new, h_new = list_all_obj[ii_new]
+                for ii in range(len(traffic_obj)):
+                    _, _, cx, cy, area, x0, y0, w, h = traffic_obj[ii]
+                    if True:
+                        dis = self._fn_cal_distance((cx_new, cy_new), (cx, cy))
+                        (arr_dis[ii_new])[ii] = dis
+
+            while True:
+                for ii_new in range(len(list_all_obj)):
+                    if arr_dis[ii_new] == []:
+                        min_dis = 10000
+                    else:
+                        min_dis = min(arr_dis[ii_new])
+                    list_min_dis[ii_new] = min_dis
+                if list_min_dis == []:
+                    final_min_dis = 10000
+                else:
+                    final_min_dis = min(list_min_dis)
+
+                if final_min_dis > min_dis_limit:
+                    break
+
+                idx_obj_new = list_min_dis.index(final_min_dis)
+                idx_obj = arr_dis[idx_obj_new].index(list_min_dis[idx_obj_new])
+
+                arr_dis[idx_obj_new] = [10000] * len(traffic_obj)
+                for ii_new in range(len(list_all_obj)):
+                    arr_dis[ii_new][idx_obj] = 10000
+
+                flag_continue_obj[idx_obj] = True
+                flag_continue_obj_new[idx_obj_new] = True
+
+                traffic_obj[idx_obj][0] += 1
+                traffic_obj[idx_obj][1] = 0
+                traffic_obj[idx_obj][2:] = list_all_obj[idx_obj_new]
+
+            for ii in range(len(traffic_obj)):
+                if not flag_continue_obj[ii]:
+                    traffic_obj[ii][1] += 1
+
+            ii = 0
+            while ii < len(traffic_obj):
+                if traffic_obj[ii][1] >= miss_limit:
+                    traffic_obj.pop(ii)
+                else:
+                    ii += 1
+
+            list_new_obj = []
+            for ii_new in range(len(list_all_obj)):
+                if not flag_continue_obj_new[ii_new]:
+                    list_new_obj.append([1, 0] + list_all_obj[ii_new])
+
+            traffic_obj += list_new_obj
+
+        return traffic_obj, img_debug
+
+    def main(self):
+        rospy.spin()
+
+if __name__ == '__main__':
+    rospy.init_node('traffic_detection')
+    node = DetectTraffic()
+    node.main()

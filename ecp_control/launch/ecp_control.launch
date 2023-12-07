@@ -1,0 +1,5 @@
+<launch>
+  <node pkg="ecp_control" type="ecp_control.py" name="ecp_control" output="screen"/>
+
+  <include file="$(find ecp_control)/launch/ecp_driving.launch"/>
+</launch>

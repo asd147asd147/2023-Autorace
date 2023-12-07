@@ -1,0 +1,41 @@
+<launch>
+    <arg name="mode" default="action" doc="mode type [debug, action]"/>
+    <arg name="gazebo" default="off" doc="gazebo type [on, off]"/>
+
+    <arg name="image_topic"                 default="/camera/sign_cam/sign_image_raw/compressed"/>
+    <arg name="weights_name"	            default="yolov3-obj.weights"/>
+    <arg name="config_name"	                default="yolov3-obj.cfg"/>
+    <arg name="classes_name"	            default="obj.names"/>
+
+    <!-- Published topics -->
+    <arg name="publish_image"	            default="true"/>
+    <arg name="detected_objects_topic"      default="detected_objects_in_image"/>
+    <arg name="detections_image_topic"      default="detections_image_topic"/>
+
+    <include file="$(find ecp_preproc)/launch/ecp_preproc_lane_cam.launch">
+        <arg name="mode" value="$(arg mode)"/>
+        <arg name="gazebo" value="$(arg gazebo)"/>
+    </include>
+
+
+    <!-- <include file="$(find ecp_preproc)/launch/ecp_preproc_sign_cam.launch">
+        <arg name="mode" value="$(arg mode)"/>
+        <arg name="image_topic" value="$(arg image_topic)"/>
+        <arg name="weights_name" value="$(arg weights_name)"/>
+        <arg name="config_name" value="$(arg config_name)"/>
+        <arg name="classes_name" value="$(arg classes_name)"/>
+        
+        <arg name="publish_image" value="$(arg publish_image)"/>
+        <arg name="detected_objects_topic" value="$(arg detected_objects_topic)"/>
+        <arg name="detections_image_topic" value="$(arg detections_image_topic)"/>
+
+    </include> -->
+
+    <include file="$(find ecp_preproc)/launch/ecp_preproc_levelcross.launch">
+        <arg name="mode" value="$(arg mode)"/>
+    </include>
+
+    <include file="$(find ecp_preproc)/launch/ecp_preproc_traffic.launch">
+        <arg name="mode" value="$(arg mode)"/>
+    </include>
+</launch>
