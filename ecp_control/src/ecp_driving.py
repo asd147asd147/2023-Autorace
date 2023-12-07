@@ -93,7 +93,7 @@ class ControlDriving():
         #DEBUG
 
         #moving params
-        self.moving_type = ECP_STATE.TUNNEL.value
+        self.moving_type = ECP_STATE.NORMAL.value
         rospy.on_shutdown(self.fnShutDown)
         time.sleep(5)
         loop_rate = rospy.Rate(100) # 10hz
